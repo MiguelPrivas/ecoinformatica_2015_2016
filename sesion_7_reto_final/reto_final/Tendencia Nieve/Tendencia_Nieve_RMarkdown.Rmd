@@ -1,0 +1,38 @@
+---
+title: "Tendencia_Nieve"
+author: "Miguel Perez"
+date: "11 de febrero de 2016"
+output: html_document
+---
+
+# En primer lugar se computará la tendencia de nieve en cada pixel.
+# Se instalan los paquetes necesarios:
+library('Kendall')  # Para Analisis Mankendall
+library('wq')       # Para Analisis Theil-sen 
+library('ggplot2')  # Para Graficos avanzados 
+library('reshape2') # Para manipular datos
+library('zoo')      # Para series temporales 
+
+# Se define el directorio de trabajo
+directorio <- 'C:/Users/Miguel/Documents/EcoinformaticaMaster/ecoinformatica_2015_2016/sesion_7_reto_final/reto_final/Tendencia Nieve'
+setwd(directorio)
+
+# Se importan los datos obtenidos mediante la consulta en Access
+duracion_nieve <- read.table('Consulta_nieve.csv', header = TRUE, sep=';')
+
+# Se manipulan con la función dcast, que dará una nueva forma a la estructura de los datos (reshape) 
+por_pixel <- dcast(duracion_nieve, anio_hidrologico ~ malla_punto_id, value.var = 'CuentaDesnow')
+# Se le da un valor 0 a los datos vacios
+por_pixel[is.na(por_pixel)] <- 0
+
+# Se convierten los datos en un objeto de zoo 
+objeto_zoo <- zoo(por_pixel[-1], por_pixel[,1])
+str(objeto_zoo)
+### Se realiza el analisis Theil-Sen para computar la tendencia
+theil <- mannKen(as.ts(objeto_zoo))
+theil
+
+# Se guarda el resultado en un CSV
+write.csv(theil, 'theil_tendencia_nieve.csv')
+
+# A continuación, mediante un software de SIG (ArcGis, por ejemplo) se realiza un join entre la tendencia de cada pixel con Malla_Modis, y el resultado se rasteriza (ver resultado en carpeta raster).
