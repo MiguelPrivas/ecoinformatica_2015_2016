@@ -1,0 +1,138 @@
+---
+title: "2050_RMarkdown"
+author: "Miguel Perez"
+date: "12 de febrero de 2016"
+output: html_document
+---
+
+# Modelo para enebrales Futuro 2050
+## Se generará un mapa a partir de las variables para ver en qué lugares es más adecuado reintroducir enebros
+
+### Se establece el directorio de trabajo
+directoriotrabajo<-"C:/Users/Miguel/Documents/EcoinformaticaMaster/ecoinformatica_2015_2016/sesion_7_reto_final/reto_final/Futuro2050"
+setwd (directoriotrabajo)
+getwd()
+
+### Se intalan y cargan los paquetes
+
+install.packages("dismo", dep=TRUE) #SDMs con R
+install.packages("plotmo", dep=TRUE) #curvas de respuesta
+install.packages("randomForest", dep=TRUE) #random forest
+install.packages("party", dep=TRUE) #árboles de inferencia condicional
+install.packages("HH", dep=TRUE) #VIF
+install.packages("tree", dep=TRUE) #árboles de regresión
+
+
+### Se cargan las librerias necesarias 
+library(dismo)
+library(plotmo)
+library(randomForest)
+library(party)
+library(HH)
+library(tree)
+library(rgdal)
+
+## Se importan las variables necesarias. Este markdown corresponde a las del año 2050. 
+#### No he podido añadir la variable de la tendencia de nieve. He guardado el Raster en formato asc. pero no puedo realizar el brick con el resto de variables ya que me indica que la extensión es distinta. Intenté recortarlas con ArcGis convirtiendolas todas en capas vectoriales (no conozco otra manera para hacerlo), pero tenían georeferenciaciones distintas y no podía ajustarlas a la extensión de Sierra Nevada. 
+
+lista_variables <- list.files(path="C:/Users/Miguel/Documents/EcoinformaticaMaster/ecoinformatica_2015_2016/sesion_7_reto_final/variables/futuro_A2/2050",pattern='*.asc', full.names=TRUE)
+
+## Con Stack y Brick se juntan las variables en un unico objeto
+
+variables <- brick(stack(lista_variables))
+
+## Se representan en un formato gráfico las variables predictoras 
+png("C:/Users/Miguel/Documents/EcoinformaticaMaster/ecoinformatica_2015_2016/sesion_7_reto_final/reto_final/Futuro2050/resultados/variables.png", width=2000, height=2000, pointsize=20)
+plot(variables)
+dev.off()
+
+
+# Ahora, se realiza un análisis de correlación de las variables predictoras 
+
+## Se transforman los mapas en tabla
+variables_tabla<-as.data.frame(variables)
+
+## Se eliminan los valores nulos 
+variables_tabla<-na.omit(variables_tabla)
+
+## Se define una matriz de correlación
+variables_correlacion<-cor(variables_tabla)
+
+## Así como una matriz de distancias, en la cual damos un valor absoluto a los datos para eliminar correlaciones negativas 
+variables_dist<-abs(as.dist(variables_correlacion))
+
+## Se hace un cluster (agrupamiento) de las variables según la distancia (MENOR DISTANCIA = MAYOR CORRELACIÓN)
+variables_cluster<-hclust(1-variables_dist)
+
+## Se genera un gráfico del cluster de correlaciones 
+plot(variables_cluster)
+
+## Se exporta a PDF 
+pdf("correlacion.pdf", width=8, height=11.5, pointsize=20)
+plot(variables_cluster)
+dev.off()
+
+## Se seleccionan las variables con las que se quieren trabajar
+variables_tabla2<-data.frame(variables_tabla$PA,variables_tabla$topo_posic,variables_tabla$sol_rad_sum,variables_tabla$huella_humana,variables_tabla$PV,variables_tabla$topo_pend)
+
+names(variables_tabla2)<-c("PA","topo_posic","sol_rad_sum","huella_humana","PV","topo_pend")
+
+
+# A continuación, se preparan las tablas de datos para los modelos
+## Se importan los registros de presencia
+### Primero se importa la tabla
+presencia_utm<-read.table("C:/Users/Miguel/Documents/EcoinformaticaMaster/ecoinformatica_2015_2016/sesion_7_reto_final/enebral/presencia_enebral.csv",header=T, sep=';')
+
+### Se convierten las coordenadas UTM a Geográficas
+presencia_utm_f <- SpatialPoints(cbind(presencia_utm$UTM_X_GPS,presencia_utm$UTM_Y_GPS), 
+                                 proj4string=CRS("+proj=utm +zone=30"))
+
+### Se convierten a longitud+latitud 
+presencia_geo <- as.data.frame(spTransform(presencia_utm_f, CRS("+proj=longlat")))
+
+### Ahora se importan los registros de ausencia
+ausencia_utm<-read.table("C:/Users/Miguel/Documents/EcoinformaticaMaster/ecoinformatica_2015_2016/sesion_7_reto_final/enebral/ausencia_enebral.txt",header=T, sep=';')
+
+### Se convierten también estas coordenadas UTM a Geográficas
+ausencia_utm_f <- SpatialPoints(cbind(ausencia_utm$UTM_X_GPS,ausencia_utm$UTM_Y_GPS), 
+                              proj4string=CRS("+proj=utm +zone=30"))
+
+### Se convierte objeto a longitud+latitud 
+ausencia_geo <- as.data.frame(spTransform(ausencia_utm_f, CRS("+proj=longlat")))
+
+### Se extraen los valores de las variables en los puntos de presencia a una tabla 
+presencia_variables<-data.frame(extract(variables, presencia_geo))
+str(presencia_variables)
+presencia_variables$respuesta <- rep(1, nrow(presencia_variables))
+
+### Y también se extraen los de ausencias
+ausencia_variables<-data.frame(extract(variables, ausencia_geo))
+ausencia_variables$respuesta <- rep(0, nrow(ausencia_variables))
+
+### Se unen la respuesta, las variables y las coordenadas en un solo dataframe
+tabla_completa<-rbind(ausencia_variables, presencia_variables)
+
+### Se omiten los registros con valores nulos
+tabla_completa<-na.omit(tabla_completa)
+
+### Se ve el resultado 
+head(tabla_completa)
+
+### Se computa una regresión logística con todas las variables y con los datos de presencia/ausencia
+
+m1<-glm(respuesta ~.,data=tabla_completa)
+
+summary(m1)
+
+### Se seleccionan las variables que son significativas. Los "estimate" dan idea de la ganancia de cada variable.
+tabla_modelo <-tabla_completa[,c('huella_humana','PA','PV','topo_posic','respuesta')]
+m2<-glm(respuesta~., data=tabla_modelo)
+summary(m2)
+
+## Una vez que se obtiene  el modelo matemático, se aplica a las variables del principio (mapas).
+p<-predict(variables, m2)
+plot(p)
+
+## Se genera el mapa en formato .asc
+p_raster<-raster(p)
+writeRaster(p, "modelo_enebrales2050.asc")
